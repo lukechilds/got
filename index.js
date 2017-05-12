@@ -63,23 +63,13 @@ function requestAsEventEmitter(opts) {
 
 				const policy = new CachePolicy(opts, response);
 				if (opts.cache && policy.storable()) {
+					const key = cacheKey(opts);
 					const encoding = opts.encoding === null ? 'buffer' : opts.encoding;
-					getStream(response, {encoding})
-						.then(data => {
-							const key = cacheKey(opts);
-							const value = {
+					Response.toObject(response, encoding)
+						.then(response => opts.cache.set(key, {
 								policy: policy.toObject(),
-								response: {
-									url: response.url,
-									statusCode: response.statusCode,
-									body: {
-										encoding,
-										data
-									}
-								}
-							};
-							opts.cache.set(key, value);
-						});
+								response
+						}));
 				}
 
 				ee.emit('response', response);
@@ -121,10 +111,8 @@ function requestAsEventEmitter(opts) {
 					opts.cache.delete(key);
 					throw new Error('Cached value is stale');
 				}
-				const {statusCode, body, url} = value.response;
-				const headers = policy.responseHeaders();
-				const bodyBuffer = Buffer.from(body.data, body.encoding);
-				const response = new Response(statusCode, headers, bodyBuffer, url);
+				value.response.headers = policy.responseHeaders();
+				const response = Response.fromObject(value.response);
 				ee.emit('response', response);
 			});
 	};
