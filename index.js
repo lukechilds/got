@@ -224,7 +224,10 @@ function asStream(opts) {
 	ee.on('response', res => {
 		const statusCode = res.statusCode;
 
-		res.pipe(output);
+		res.on('data', buffer => {
+			output.push(buffer);
+		});
+		res.on('end', () => output.push(null));
 
 		if (statusCode !== 304 && (statusCode < 200 || statusCode > 299)) {
 			proxy.emit('error', new got.HTTPError(statusCode, opts), null, res);
