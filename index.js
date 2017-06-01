@@ -37,6 +37,56 @@ function requestAsEventEmitter(opts) {
 		const req = fn.request(opts, res => {
 			const statusCode = res.statusCode;
 
+			if (revalidateCache) {
+				const cachedResponse = revalidateCache.response;
+				const {policy, modified} = CachePolicy.fromObject(revalidateCache.policy).revalidatedPolicy(opts, res);
+				if (!modified) {
+					const {statusCode, url} = res;
+					const headers = policy.responseHeaders();
+					const bodyBuffer = Buffer.from(cachedResponse.body.data, cachedResponse.body.encoding);
+					res = new Response(statusCode, headers, bodyBuffer, url);
+					res.cachePolicy = policy;
+				}
+			}
+
+			if (typeof res.cachePolicy === 'undefined') {
+				res.cachePolicy = new CachePolicy(opts, res);
+			}
+			if (opts.cache && res.cachePolicy.storable()) {
+
+				const stream = res;
+				const pass = require('stream').PassThrough;
+				res = new pass;
+				const clonedRes = new pass;
+				stream.pipe(res);
+				stream.pipe(clonedRes);
+				copyProps(stream, res);
+				copyProps(stream, clonedRes);
+
+				const encoding = 'buffer';
+				getStream(clonedRes, {encoding})
+					.then(body => {
+						res.body = body;
+						const key = cacheKey(opts);
+						const value = {
+							policy: res.cachePolicy.toObject(),
+							response: {
+								url: res.url,
+								statusCode: res.statusCode,
+								body: {
+									encoding: opts.encoding,
+									data: res.body
+								}
+							}
+						};
+						const ttl = res.cachePolicy.timeToLive();
+						opts.cache.set(key, value, ttl);
+					});
+			} else if (revalidateCache) {
+				const key = cacheKey(opts);
+				opts.cache.delete(key);
+			}
+
 			if (isRedirect(statusCode) && opts.followRedirect && 'location' in res.headers && (opts.method === 'GET' || opts.method === 'HEAD')) {
 				res.resume();
 
@@ -59,46 +109,6 @@ function requestAsEventEmitter(opts) {
 
 			setImmediate(() => {
 				let response = typeof unzipResponse === 'function' && req.method !== 'HEAD' ? unzipResponse(res) : res;
-
-				if (revalidateCache) {
-					const cachedResponse = revalidateCache.response;
-					const {policy, modified} = CachePolicy.fromObject(revalidateCache.policy).revalidatedPolicy(opts, response);
-					if (!modified) {
-						const {statusCode, url} = response;
-						const headers = policy.responseHeaders();
-						const bodyBuffer = Buffer.from(cachedResponse.body.data, cachedResponse.body.encoding);
-						response = new Response(statusCode, headers, bodyBuffer, url);
-						response.cachePolicy = policy;
-					}
-				}
-
-				if (typeof response.cachePolicy === 'undefined') {
-					response.cachePolicy = new CachePolicy(opts, response);
-				}
-				if (opts.cache && response.cachePolicy.storable()) {
-					const encoding = opts.encoding === null ? 'buffer' : opts.encoding;
-					getStream(response, {encoding})
-						.then(body => {
-							response.body = body;
-							const key = cacheKey(opts);
-							const value = {
-								policy: response.cachePolicy.toObject(),
-								response: {
-									url: response.url,
-									statusCode: response.statusCode,
-									body: {
-										encoding: opts.encoding,
-										data: response.body
-									}
-								}
-							};
-							const ttl = response.cachePolicy.timeToLive();
-							opts.cache.set(key, value, ttl);
-						});
-				} else if (revalidateCache) {
-					const key = cacheKey(opts);
-					opts.cache.delete(key);
-				}
 
 				response.url = redirectUrl || requestUrl;
 				response.requestUrl = requestUrl;
@@ -444,3 +454,32 @@ got.MaxRedirectsError = createErrorClass('MaxRedirectsError', function (statusCo
 });
 
 module.exports = got;
+
+const knownProps = [
+'destroy',
+'setTimeout',
+'socket',
+'headers',
+'trailers',
+'rawHeaders',
+'statusCode',
+'httpVersion',
+'httpVersionMinor',
+'httpVersionMajor',
+'rawTrailers',
+'statusMessage'
+];
+
+const copyProps = (fromStream, toStream) => {
+const toProps = Object.keys(toStream);
+const fromProps = new Set(Object.keys(fromStream).concat(knownProps));
+
+for (const prop of fromProps) {
+// Don't overwrite existing properties
+if (toProps.indexOf(prop) !== -1) {
+continue;
+}
+
+toStream[prop] = typeof prop === 'function' ? fromStream[prop].bind(fromStream) : fromStream[prop];
+}
+};

@@ -56,6 +56,18 @@ test.before('setup', async () => {
 		res.end('cache-then-no-store-on-revalidate');
 	});
 
+	s.on('/redirect-dest', (req, res) => {
+		res.end('reached');
+	});
+
+	s.on('/redirect', (req, res) => {
+		res.setHeader('Cache-Control', 'public, max-age=60');
+		res.writeHead(301, {
+			location: `${s.url}/redirect-dest`
+		});
+		res.end();
+	});
+
 	await s.listen(s.port);
 });
 
@@ -190,6 +202,18 @@ test('Response objects have fromCache property set correctly', async t => {
 
 	t.false(response.fromCache);
 	t.true(cachedResponse.fromCache);
+});
+
+test('Cached redirects work correctly', async t => {
+	const endpoint = '/redirect';
+	const cache = new Map();
+
+	const response = await got(s.url + endpoint, {cache});
+	// const cachedResponse = await got(s.url + endpoint, {cache});
+
+	console.log(cache);
+
+	t.is(response.body, 'reached');
 });
 
 test.after('cleanup', async () => {
