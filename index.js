@@ -226,13 +226,13 @@ function requestAsEventEmitter(opts) {
 					total: uploadBodySize
 				});
 
-				req.connection.once('connect', () => {
+				req.socket.once('connect', () => {
 					const uploadEventFrequency = 150;
 
 					progressInterval = setInterval(() => {
 						const lastUploaded = uploaded;
 						const headersSize = Buffer.byteLength(req._header);
-						uploaded = req.connection.bytesWritten - headersSize;
+						uploaded = req.socket.bytesWritten - headersSize;
 
 						// Prevent the known issue of `bytesWritten` being larger than body size
 						if (uploadBodySize && uploaded > uploadBodySize) {
